@@ -1,6 +1,10 @@
 import { exit } from "process";
 import { AdvisorInfo, scrape } from "./scrape";
 import * as readline from "readline/promises";
+import { mkdir, writeFile, access, constants } from "fs/promises";
+import { stringify } from "csv/sync";
+import { resolve } from "path";
+import { formatISO9075 } from "date-fns";
 
 async function main() {
     const rl = readline.createInterface({
@@ -14,9 +18,49 @@ async function main() {
         exit(1);
     }
 
-    await scrape(zip);
+    const advisors = await scrape(zip);
+    const fileName = `advisors ${formatISO9075(new Date()).replaceAll(":", "-")}`;
+    console.log(fileName);
+    
+    try {
+        await access("results", constants.F_OK);
+    } catch (_) {
+        await mkdir("results");
+    }
+    try {
+        await access("results/json", constants.F_OK);
+    } catch (_) {
+        await mkdir("results/json");
+    }
+    await writeFile(
+        `results/json/${fileName}.json`,
+        JSON.stringify(advisors, null, 2)
+    );
 
-    exit()
+    const advisorStrings = advisors.map((advisor) => [
+        advisor.name,
+        advisor.email ?? "",
+        advisor.address ?? "",
+        advisor.phoneNo ?? "",
+        ...advisor.sites,
+    ]);
+    const csv = stringify([
+        ["Name", "Email", "Address", "Phone Number", "Website(s)"],
+        ...advisorStrings,
+    ]);
+    try {
+        await access("results/csv", constants.F_OK);
+    } catch (_) {
+        await mkdir("results/csv")
+    }
+    await writeFile(`results/csv/${fileName}.csv`, csv);
+    const finalFileLocation = resolve(`results/csv/${fileName}.csv`);
+
+    console.log(
+        `Finished successfully! Your csv file is at ${finalFileLocation}`
+    );
+
+    exit();
 }
 
 main();

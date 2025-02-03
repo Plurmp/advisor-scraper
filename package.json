@@ -10,6 +10,8 @@
   "dependencies": {
     "bluebird": "^3.7.2",
     "cheerio": "^1.0.0",
+    "csv": "^6.3.11",
+    "date-fns": "^4.1.0",
     "puppeteer": "^24.1.1",
     "undici-types": "^6.20.0"
   },
