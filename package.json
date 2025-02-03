@@ -1,0 +1,24 @@
+{
+  "devDependencies": {
+    "@types/bluebird": "^3.5.42",
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  },
+  "main": "out/index.js",
+  "name": "advisor-scraper",
+  "version": "1.0.0",
+  "dependencies": {
+    "bluebird": "^3.7.2",
+    "cheerio": "^1.0.0",
+    "puppeteer": "^24.1.1",
+    "undici-types": "^6.20.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": ""
+}
