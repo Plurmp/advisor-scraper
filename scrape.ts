@@ -1,6 +1,8 @@
 import puppeteer, { Browser, TimeoutError } from "puppeteer";
 import * as cheerio from "cheerio";
-import { Promise as BluePromise } from "bluebird";
+import bluebird from "bluebird";
+const { Promise: BluePromise } = bluebird;
+import { writeFile } from "fs/promises";
 
 export interface AdvisorInfo {
     name: string;
@@ -29,8 +31,9 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function scrape(zip: string): Promise<AdvisorInfo[]> {
     const browser = await puppeteer.launch();
     let advisorFinders = [
-        // scrapeEdwardJones,
-        scrapeAmeripriseAdvisors,
+        // scrapeEdwardJones, // RATE LIMITED
+        // scrapeAmeripriseAdvisors,
+        scrapeStifel,
     ];
     return (
         await Promise.all(advisorFinders.map((fun) => fun(zip, browser)))
@@ -115,13 +118,26 @@ async function scrapeEdwardJonesSearchPage(
 
 async function scrapeAmeripriseAdvisors(
     zip: string,
-    browser: Browser
+    browser: Browser,
+    retries = 0
 ): Promise<AdvisorInfo[]> {
+    if (retries === 0) {
+        console.log("Scraping Ameriprise Advisors...");
+    } else if (retries > 5) {
+        console.log(`Retries on Ameriprise exceeding 5, aborting...`);
+        return [];
+    }
+
     const url = `https://www.ameripriseadvisors.com/#search?crit=%7Bse%3Adefault%3Bnrr%3A6%3Bsri%3A0%3Brd%3A5%3Bst%3Azip%20code%3Blt%3A0%3Blg%3A0%3Bt%3A${zip}%7D&page=0`;
 
     const page = await browser.newPage();
-    await page.goto(url);
-    await page.waitForSelector("div.card-main-container");
+    try {
+        await page.goto(url);
+        await page.waitForSelector("div.card-main-container");
+    } catch (e) {
+        console.log(`TimeoutError on Ameriprise, retrying (${retries})...`);
+        return scrapeAmeripriseAdvisors(zip, browser, retries + 1);
+    }
 
     for (
         let bh = await page.$("button.load-more-results");
@@ -155,20 +171,42 @@ async function scrapeAmeripriseAdvisors(
 }
 
 async function scrapeAmeripriseAdvisorsPage(
-    url: string
+    url: string,
+    retries = 0
 ): Promise<AdvisorInfo | undefined> {
-    const html = await (await fetch(url)).text();
+    if (retries > 5) {
+        console.log(`Retries on ${url} exceeding 5, aborting...`);
+        return undefined;
+    }
+
+    let html = "";
+    try {
+        html = await (await fetch(url)).text();
+    } catch (e) {
+        if (e instanceof TypeError) {
+            console.log(`Fetch on ${url} failed, retrying(${retries})...`);
+            return scrapeAmeripriseAdvisorsPage(url, retries + 1);
+        }
+    }
     const $ = cheerio.load(html);
 
-    const financialService = JSON.parse(
-        $('script[type="application/ld+json"]')
-            .filter((_, el) => {
-                const ldJson = JSON.parse($(el).text());
-                return ldJson["@type"] === "FinancialService";
-            })
-            .first()
-            .text()
-    ) as FinancialService;
+    let unparsedJson = $('script[type="application/ld+json"]')
+        .filter((_, el) => {
+            const ldJson = JSON.parse($(el).text());
+            return ldJson["@type"] === "FinancialService" || !!ldJson["@graph"];
+        })
+        .first()
+        .text();
+    await writeFile("scrap1.json", unparsedJson);
+    let financialService = <FinancialService>{};
+    const parsedJson = JSON.parse(unparsedJson);
+    if (!!parsedJson["@graph"]) {
+        financialService = (parsedJson["@graph"] as any[]).filter(
+            (schema) => schema["@type"] === "FinancialService"
+        )[0] as FinancialService;
+    } else {
+        financialService = JSON.parse(unparsedJson) as FinancialService;
+    }
 
     const address = [
         financialService.address.streetAddress,
@@ -178,7 +216,7 @@ async function scrapeAmeripriseAdvisorsPage(
         financialService.address.addressCountry,
     ]
         .filter((addrPart) => addrPart.length > 0)
-        .join(",");
+        .join(", ");
     const email = $("ul.email-phone > li > a.phone-email")
         .filter((_, el) => el.attribs["href"].startsWith("mailto:"))
         .first()
@@ -196,5 +234,77 @@ async function scrapeAmeripriseAdvisorsPage(
         sites: [financialService.url, ...financialService.sameAs].filter(
             (site) => site.length > 0
         ),
+    };
+}
+
+async function scrapeStifel(
+    zip: string,
+    browser: Browser
+): Promise<AdvisorInfo[]> {
+    console.log("Scraping Stifel...");
+    
+    let url = `https://www.stifel.com/fa/search?zipcode=${zip}&distance=20`;
+
+    const page = await browser.newPage();
+    await page.goto(url);
+    await page.waitForSelector("a.search-results-fa-link");
+    let advisorPages = await page.$$eval("a.search-results-fa-link", (elems) =>
+        elems.map((elem) => elem.href)
+    );
+    for (
+        let nextPage = await page.$("input#btnNextPage");
+        nextPage !== null;
+        nextPage = await page.$("input#btnNextPage")
+    ) {
+        await nextPage.evaluate((np) => np.click());
+        await page.waitForSelector("a.search-results-fa-link");
+        advisorPages = advisorPages.concat(
+            await page.$$eval("a.search-results-fa-link", (elems) =>
+                elems.map((elem) => elem.href)
+            )
+        );
+    }
+    await page.close()
+    // console.log(advisorPages);
+
+    return await BluePromise.map(
+        advisorPages,
+        async (advisorPage) => await scrapeStifelPage(advisorPage, browser),
+        { concurrency: 32 }
+    );
+}
+
+export async function scrapeStifelPage(
+    url: string,
+    browser: Browser,
+): Promise<AdvisorInfo> {
+    let html = await (await fetch(url)).text();
+    let $ = cheerio.load(html);
+
+    if ($("span.fa-landing-name").length === 0) {
+        const page = await browser.newPage();
+        await page.goto(url);
+        await page.waitForSelector("span.fa-landing-name");
+        html = await page.content();
+        $ = cheerio.load(html);
+        await page.close();
+    }
+
+    const name = $("span.fa-landing-name").text();
+    const phoneNo = $("dd.fa-landing-phone-desktop")
+        .text()
+        .replaceAll(/\D/g, "");
+    const address = $("div.fa-landing-address dd")
+        .slice(1, -1)
+        .map((_, el) => $(el).text().trim())
+        .toArray()
+        .join(", ");
+    const sites = [new URL(url).origin + new URL(url).pathname];
+    
+    return {
+        name,
+        phoneNo,
+        address,
+        sites,
     };
 }

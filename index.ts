@@ -1,5 +1,5 @@
 import { exit } from "process";
-import { AdvisorInfo, scrape } from "./scrape";
+import { AdvisorInfo, scrape } from "./scrape.js";
 import * as readline from "readline/promises";
 import { mkdir, writeFile, access, constants } from "fs/promises";
 import { stringify } from "csv/sync";
@@ -20,7 +20,6 @@ async function main() {
 
     const advisors = await scrape(zip);
     const fileName = `advisors ${formatISO9075(new Date()).replaceAll(":", "-")}`;
-    console.log(fileName);
     
     try {
         await access("results", constants.F_OK);

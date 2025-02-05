@@ -1,5 +1,5 @@
 node_modules/
 out/
 package-lock.json
-scrap*.json
+scrap*.*
 results/
