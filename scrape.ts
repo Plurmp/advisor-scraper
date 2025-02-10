@@ -32,8 +32,10 @@ export async function scrape(zip: string): Promise<AdvisorInfo[]> {
     const browser = await puppeteer.launch();
     let advisorFinders = [
         // scrapeEdwardJones, // RATE LIMITED
-        // scrapeAmeripriseAdvisors,
+        scrapeAmeripriseAdvisors,
         scrapeStifel,
+        // scrapeJanney, // BLOCKED
+
     ];
     return (
         await Promise.all(advisorFinders.map((fun) => fun(zip, browser)))
@@ -307,4 +309,92 @@ export async function scrapeStifelPage(
         address,
         sites,
     };
+}
+
+async function scrapeJanney(zip: string, _: Browser): Promise<AdvisorInfo[]> {
+    const newBrowser = await puppeteer.launch({headless: false});
+    const page = await newBrowser.newPage();
+    await page.goto("https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor");
+    await writeFile("scrap.html", await page.content());
+    await page.waitForSelector("input#SearchZip");
+    await page.type("input#SearchZip", zip, {delay: 100});
+    await page.click("div.jcom-form-group:nth-child(4) > button:nth-child(1)");
+    await page.waitForSelector("li.jcom-person-card");
+    const html = await page.content();
+    const $ = cheerio.load(html);
+    await page.close();
+    await newBrowser.close();
+    
+    const advisors = $("li.jcom-person-card").map(
+        (_, card) => {
+            const $cardContent = $(card).find("div.jcom-card-content");
+            const name = $cardContent.find("h3.jcom-person-card-name").text();
+            const email = $cardContent.find("i.jcom-icon--email").parent().text();
+            const phoneNo = $cardContent.find("i.jcom-icon--phone").parent().text();
+            const address = $cardContent.find("i.jcom-icon--location").parent().text();
+            const sites = ["https://www.janney.com" + $cardContent.find("a").attr("href")];
+
+            return <AdvisorInfo>{
+                name,
+                email,
+                phoneNo,
+                address,
+                sites,
+            }
+        }
+    ).toArray();
+    console.log(advisors[0]);
+    
+
+    return [];
+}
+
+async function scrapeRaymondJames(zip: string, browser: Browser): Promise<AdvisorInfo[]> {
+    console.log("Scraping Raymond James...");
+    
+    const page = await browser.newPage();
+    await page.goto(`https://www.raymondjames.com/find-an-advisor?citystatezip=${zip}`);
+    await page.waitForSelector("li.faa-result")
+    let advisors: AdvisorInfo[] = [];
+    do {
+        const html = await page.content();
+        const $ = cheerio.load(html);
+        advisors.push(...$("li.faa-result").map((_, branch) => {
+            const $branch = $(branch);
+            const address = $branch
+                .find("div.location-address span")
+                .map((_, el) => $(el).text())
+                .toArray()
+                .join(", ");
+            const defaultPhone = $branch
+                .find("a.location-phone")
+                .text()
+                .replace(".", "");
+            return $branch.find("div.faa-location-advisor").map(
+                (_, advisor) => {
+                    const $advisor = $(advisor);
+                    const name = $advisor.find("div.media-body > a:nth-child(1)").text();
+                    const phoneNo = $advisor.find("a.advisor-phone").length > 1 
+                        ? $advisor.find("a.advisor-phone").text().replace(".", "")
+                        : defaultPhone;
+                    const sites = [
+                        $advisor.find("div.media-body > a:nth-child(1)").attr("href") ?? "",
+                        ...$advisor.find("div.advisor-links > a").map((_, el) => el.attribs["href"]).toArray(),
+                    ].map((advisorLink) => {
+                        if (advisorLink.indexOf("http") !== 0) {
+                            return "https://www.raymondjames.com" + advisorLink;
+                        } else {
+                            return advisorLink;
+                        }
+                    })
+                    return <AdvisorInfo>{
+                        name,
+                        phoneNo,
+                        address,
+                        sites,
+                    }
+                }
+            ).toArray()
+        }).toArray())
+    } while ()
 }
