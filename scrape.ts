@@ -51,7 +51,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function scrape(zip: string): Promise<AdvisorInfo[]> {
     const browser = await puppeteer.launch();
     let advisorFinders = [
-        scrapeEdwardJones, // RATE LIMITED
+        scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
         scrapeStifel,
         // scrapeJanney, // BLOCKED
