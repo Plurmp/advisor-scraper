@@ -41,7 +41,7 @@ interface EdwardJonesAdvisor {
     faUrl: string;
     socialMedia:
         | {
-              [key: string]: string
+              [key: string]: string;
           }[]
         | "";
 }
@@ -49,7 +49,7 @@ interface EdwardJonesAdvisor {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function scrape(zip: string): Promise<AdvisorInfo[]> {
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({});
     let advisorFinders = [
         scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
@@ -60,7 +60,17 @@ export async function scrape(zip: string): Promise<AdvisorInfo[]> {
         scrapeLPL,
     ];
     return (
-        await Promise.all(advisorFinders.map((fun) => fun(zip, browser)))
+        await Promise.all(
+            advisorFinders.map(async (scrapeFunc) => {
+                try {
+                    return await scrapeFunc(zip, browser);
+                } catch (e) {
+                    console.log(`Error at ${scrapeFunc.name}`);
+                    console.log(e);
+                    return [];
+                }
+            })
+        )
     ).flat();
 }
 
@@ -68,31 +78,34 @@ async function scrapeEdwardJones(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
+    console.log("Scraping Edward Jones...");
     const urlObject = new URL(
         "https://www.edwardjones.com/us-en/search/find-a-financial-advisor"
     );
     urlObject.searchParams.set("fasearch", zip);
     urlObject.searchParams.set("searchtype", "2");
 
-    const page = await browser.newPage();
+    const headful = await puppeteer.launch({headless: false});
+    const page = await headful.newPage();
     await page.goto(urlObject.toString());
     await page.waitForSelector("button#tabs--2--tab--1");
     await page.click("button#tabs--2--tab--1");
-    const edResponse = await page.waitForResponse(
-        (response) =>
-            response.url().includes("pageSize=200") 
+    const edResponse = await page.waitForResponse((response) =>
+        response.url().includes("pageSize=200")
     );
     const jsonString = Buffer.from(await edResponse.content()).toString(
         "utf-8"
     );
     const edResults = JSON.parse(jsonString) as EdwardJonesResults;
-    
+
+    await headful.close();
+
     return edResults.results.map((advisor) => {
         let sites = ["https://www.edwardjones.com" + advisor.faUrl];
         if (advisor.socialMedia !== "") {
             advisor.socialMedia.forEach((thisSite) => {
                 for (const k in thisSite) {
-                    sites.push(thisSite[k])
+                    sites.push(thisSite[k]);
                 }
             });
         }
@@ -258,7 +271,7 @@ async function scrapeStifel(
     );
 }
 
-export async function scrapeStifelPage(
+async function scrapeStifelPage(
     url: string,
     browser: Browser
 ): Promise<AdvisorInfo> {
@@ -455,6 +468,7 @@ async function scrapeSchwab(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
+    console.log("Scraping Schwab...");
     const page = await browser.newPage();
     await page.goto(`https://client.schwab.com/public/consultant/find`, {
         timeout: 60_000,
@@ -521,6 +535,8 @@ async function scrapeLPL(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
+    console.log("Scraping LPL...");
+
     const page = await browser.newPage();
     await page.goto(
         "https://faa.lpl.com/FindAnAdvisor/app/advisor-search.html"
