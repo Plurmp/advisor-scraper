@@ -28,16 +28,34 @@ interface FinancialService {
     sameAs: string[];
 }
 
+interface EdwardJonesResults {
+    results: EdwardJonesAdvisor[];
+}
+
+interface EdwardJonesAdvisor {
+    faName: string;
+    address: string;
+    faCity: string;
+    faState: string;
+    phone: string;
+    faUrl: string;
+    socialMedia:
+        | {
+              [key: string]: string
+          }[]
+        | "";
+}
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function scrape(zip: string): Promise<AdvisorInfo[]> {
     const browser = await puppeteer.launch();
     let advisorFinders = [
-        // scrapeEdwardJones, // RATE LIMITED
+        scrapeEdwardJones, // RATE LIMITED
         scrapeAmeripriseAdvisors,
         scrapeStifel,
         // scrapeJanney, // BLOCKED
-        scrapeRaymondJames,
+        // scrapeRaymondJames, // LOAD EACH ADVISOR
         scrapeSchwab,
         scrapeLPL,
     ];
@@ -58,69 +76,36 @@ async function scrapeEdwardJones(
 
     const page = await browser.newPage();
     await page.goto(urlObject.toString());
-    await page.waitForSelector('span.text-sm[tabindex="-1"]');
-    const html = await page.content();
-    const $ = cheerio.load(html);
-    await page.close();
-
-    const totalResults = +(
-        $('span.text-sm[tabindex="-1"]')
-            .text()
-            .match(/of (\d+) Results/)?.[1] ?? 0
+    await page.waitForSelector("button#tabs--2--tab--1");
+    await page.click("button#tabs--2--tab--1");
+    const edResponse = await page.waitForResponse(
+        (response) =>
+            response.url().includes("pageSize=200") 
     );
-    const searchPages = Array.from(
-        { length: Math.ceil(totalResults / 16) + 1 },
-        (_, i) => {
-            urlObject.searchParams.set("page", i.toString());
-            return urlObject.toString();
-        }
+    const jsonString = Buffer.from(await edResponse.content()).toString(
+        "utf-8"
     );
-    console.log(searchPages);
-    const jobPages = (
-        await BluePromise.map(
-            searchPages,
-            async (searchPage: string) =>
-                await scrapeEdwardJonesSearchPage(searchPage, browser),
-            { concurrency: 10 }
-        )
-    ).flat();
-    console.log(jobPages.length);
-
-    return [];
-}
-
-async function scrapeEdwardJonesSearchPage(
-    url: string,
-    browser: Browser,
-    retries = 0
-): Promise<string[]> {
-    if (retries > 5) {
-        console.log(`Retries on ${url} exceeding 5, aborting...`);
-        return [];
-    }
-
-    const page = await browser.newPage();
-    try {
-        await page.goto(url);
-        await page.waitForSelector("div.flex.h-full");
-    } catch (e) {
-        if (e instanceof TimeoutError) {
-            console.log(`TimeoutError on ${url}, retrying (${retries})...`);
-            return scrapeEdwardJonesSearchPage(url, browser, retries + 1);
+    const edResults = JSON.parse(jsonString) as EdwardJonesResults;
+    
+    return edResults.results.map((advisor) => {
+        let sites = ["https://www.edwardjones.com" + advisor.faUrl];
+        if (advisor.socialMedia !== "") {
+            advisor.socialMedia.forEach((thisSite) => {
+                for (const k in thisSite) {
+                    sites.push(thisSite[k])
+                }
+            });
         }
-    }
-    const html = await page.content();
-    const $ = cheerio.load(html);
-    await page.close();
-
-    return $("div.flex.h-full div.flex-1 h3 a")
-        .map((_, el) => "https://www.edwardjones.com" + el.attribs["href"])
-        .toArray();
+        return <AdvisorInfo>{
+            name: advisor.faName,
+            address: advisor.address.replace(/, [^,]+, \w{2} \d{5}/, ""),
+            phoneNo: advisor.phone,
+            city: advisor.faCity,
+            state: advisor.faState,
+            sites,
+        };
+    });
 }
-
-// async function scrapeEdwardJonesPage(url: string, browser: Browser): Promise<AdvisorInfo[]> {
-
-// }
 
 async function scrapeAmeripriseAdvisors(
     zip: string,
@@ -436,7 +421,7 @@ async function scrapeRaymondJames(
                             }
                         });
                         const advisorInfo = <AdvisorInfo>{
-                            name, 
+                            name,
                             phoneNo,
                             address,
                             city,
