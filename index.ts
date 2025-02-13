@@ -19,8 +19,11 @@ async function main() {
     }
 
     const advisors = await scrape(zip);
-    const fileName = `advisors ${formatISO9075(new Date()).replaceAll(":", "-")}`;
-    
+    const fileName = `advisors ${formatISO9075(new Date()).replaceAll(
+        ":",
+        "-"
+    )}`;
+
     try {
         await access("results", constants.F_OK);
     } catch (_) {
@@ -40,17 +43,27 @@ async function main() {
         advisor.name,
         advisor.email ?? "",
         advisor.address ?? "",
+        advisor.city ?? "",
+        advisor.state ?? "",
         advisor.phoneNo ?? "",
-        ...advisor.sites,
+        ...(advisor.sites ?? [""]),
     ]);
     const csv = stringify([
-        ["Name", "Email", "Address", "Phone Number", "Website(s)"],
+        [
+            "Name",
+            "Email",
+            "Address",
+            "City",
+            "State",
+            "Phone Number",
+            "Website(s)",
+        ],
         ...advisorStrings,
     ]);
     try {
         await access("results/csv", constants.F_OK);
     } catch (_) {
-        await mkdir("results/csv")
+        await mkdir("results/csv");
     }
     await writeFile(`results/csv/${fileName}.csv`, csv);
     const finalFileLocation = resolve(`results/csv/${fileName}.csv`);

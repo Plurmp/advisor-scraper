@@ -8,6 +8,8 @@ export interface AdvisorInfo {
     name: string;
     email?: string;
     address?: string;
+    city?: string;
+    state?: string;
     phoneNo?: string;
     sites: string[];
 }
@@ -35,7 +37,9 @@ export async function scrape(zip: string): Promise<AdvisorInfo[]> {
         scrapeAmeripriseAdvisors,
         scrapeStifel,
         // scrapeJanney, // BLOCKED
-
+        scrapeRaymondJames,
+        scrapeSchwab,
+        scrapeLPL,
     ];
     return (
         await Promise.all(advisorFinders.map((fun) => fun(zip, browser)))
@@ -167,7 +171,7 @@ async function scrapeAmeripriseAdvisors(
             advisorPages,
             async (advisorPage) =>
                 await scrapeAmeripriseAdvisorsPage(advisorPage),
-            { concurrency: 32 }
+            { concurrency: 20 }
         )
     ).filter((a): a is AdvisorInfo => !!a);
 }
@@ -210,15 +214,6 @@ async function scrapeAmeripriseAdvisorsPage(
         financialService = JSON.parse(unparsedJson) as FinancialService;
     }
 
-    const address = [
-        financialService.address.streetAddress,
-        financialService.address.addressLocality,
-        financialService.address.addressRegion,
-        financialService.address.postalCode,
-        financialService.address.addressCountry,
-    ]
-        .filter((addrPart) => addrPart.length > 0)
-        .join(", ");
     const email = $("ul.email-phone > li > a.phone-email")
         .filter((_, el) => el.attribs["href"].startsWith("mailto:"))
         .first()
@@ -231,7 +226,9 @@ async function scrapeAmeripriseAdvisorsPage(
             ""
         ),
         email,
-        address,
+        address: financialService.address.streetAddress,
+        city: financialService.address.addressLocality,
+        state: financialService.address.addressRegion,
         phoneNo: financialService.telephone,
         sites: [financialService.url, ...financialService.sameAs].filter(
             (site) => site.length > 0
@@ -244,7 +241,7 @@ async function scrapeStifel(
     browser: Browser
 ): Promise<AdvisorInfo[]> {
     console.log("Scraping Stifel...");
-    
+
     let url = `https://www.stifel.com/fa/search?zipcode=${zip}&distance=20`;
 
     const page = await browser.newPage();
@@ -266,19 +263,19 @@ async function scrapeStifel(
             )
         );
     }
-    await page.close()
+    await page.close();
     // console.log(advisorPages);
 
     return await BluePromise.map(
         advisorPages,
         async (advisorPage) => await scrapeStifelPage(advisorPage, browser),
-        { concurrency: 32 }
+        { concurrency: 20 }
     );
 }
 
 export async function scrapeStifelPage(
     url: string,
-    browser: Browser,
+    browser: Browser
 ): Promise<AdvisorInfo> {
     let html = await (await fetch(url)).text();
     let $ = cheerio.load(html);
@@ -294,45 +291,66 @@ export async function scrapeStifelPage(
 
     const name = $("span.fa-landing-name").text();
     const phoneNo = $("dd.fa-landing-phone-desktop")
+        .first()
         .text()
         .replaceAll(/\D/g, "");
     const address = $("div.fa-landing-address dd")
-        .slice(1, -1)
+        .slice(1, -2)
         .map((_, el) => $(el).text().trim())
         .toArray()
         .join(", ");
+    const matchArray = $($("div.fa-landing-address dd").get(-2))
+        .text()
+        .match(/(?<city>\w+), (?<state>\w+)/);
+    const city = matchArray?.groups?.["city"];
+    const state = matchArray?.groups?.["state"];
     const sites = [new URL(url).origin + new URL(url).pathname];
-    
+
     return {
         name,
         phoneNo,
         address,
+        city,
+        state,
         sites,
     };
 }
 
 async function scrapeJanney(zip: string, _: Browser): Promise<AdvisorInfo[]> {
-    const newBrowser = await puppeteer.launch({headless: false});
+    const newBrowser = await puppeteer.launch({ headless: false });
     const page = await newBrowser.newPage();
-    await page.goto("https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor");
+    await page.goto(
+        "https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor"
+    );
     await writeFile("scrap.html", await page.content());
     await page.waitForSelector("input#SearchZip");
-    await page.type("input#SearchZip", zip, {delay: 100});
+    await page.type("input#SearchZip", zip, { delay: 100 });
     await page.click("div.jcom-form-group:nth-child(4) > button:nth-child(1)");
     await page.waitForSelector("li.jcom-person-card");
     const html = await page.content();
     const $ = cheerio.load(html);
     await page.close();
     await newBrowser.close();
-    
-    const advisors = $("li.jcom-person-card").map(
-        (_, card) => {
+
+    const advisors = $("li.jcom-person-card")
+        .map((_, card) => {
             const $cardContent = $(card).find("div.jcom-card-content");
             const name = $cardContent.find("h3.jcom-person-card-name").text();
-            const email = $cardContent.find("i.jcom-icon--email").parent().text();
-            const phoneNo = $cardContent.find("i.jcom-icon--phone").parent().text();
-            const address = $cardContent.find("i.jcom-icon--location").parent().text();
-            const sites = ["https://www.janney.com" + $cardContent.find("a").attr("href")];
+            const email = $cardContent
+                .find("i.jcom-icon--email")
+                .parent()
+                .text();
+            const phoneNo = $cardContent
+                .find("i.jcom-icon--phone")
+                .parent()
+                .text();
+            const address = $cardContent
+                .find("i.jcom-icon--location")
+                .parent()
+                .text();
+            const sites = [
+                "https://www.janney.com" + $cardContent.find("a").attr("href"),
+            ];
 
             return <AdvisorInfo>{
                 name,
@@ -340,61 +358,246 @@ async function scrapeJanney(zip: string, _: Browser): Promise<AdvisorInfo[]> {
                 phoneNo,
                 address,
                 sites,
-            }
-        }
-    ).toArray();
+            };
+        })
+        .toArray();
     console.log(advisors[0]);
-    
 
     return [];
 }
 
-async function scrapeRaymondJames(zip: string, browser: Browser): Promise<AdvisorInfo[]> {
+async function scrapeRaymondJames(
+    zip: string,
+    browser: Browser
+): Promise<AdvisorInfo[]> {
     console.log("Scraping Raymond James...");
-    
-    const page = await browser.newPage();
-    await page.goto(`https://www.raymondjames.com/find-an-advisor?citystatezip=${zip}`);
-    await page.waitForSelector("li.faa-result")
+    const url = `https://www.raymondjames.com/find-an-advisor?citystatezip=${zip}`;
+
+    const newBrowser = await puppeteer.launch({ headless: false });
+    const page = await newBrowser.newPage();
+    await page.goto(url);
+    await page.waitForSelector("li.faa-result");
+
+    let html = await page.content();
+    let $ = cheerio.load(html);
     let advisors: AdvisorInfo[] = [];
-    do {
-        const html = await page.content();
-        const $ = cheerio.load(html);
-        advisors.push(...$("li.faa-result").map((_, branch) => {
-            const $branch = $(branch);
-            const address = $branch
-                .find("div.location-address span")
-                .map((_, el) => $(el).text())
-                .toArray()
-                .join(", ");
-            const defaultPhone = $branch
-                .find("a.location-phone")
-                .text()
-                .replace(".", "");
-            return $branch.find("div.faa-location-advisor").map(
-                (_, advisor) => {
-                    const $advisor = $(advisor);
-                    const name = $advisor.find("div.media-body > a:nth-child(1)").text();
-                    const phoneNo = $advisor.find("a.advisor-phone").length > 1 
-                        ? $advisor.find("a.advisor-phone").text().replace(".", "")
-                        : defaultPhone;
-                    const sites = [
-                        $advisor.find("div.media-body > a:nth-child(1)").attr("href") ?? "",
-                        ...$advisor.find("div.advisor-links > a").map((_, el) => el.attribs["href"]).toArray(),
-                    ].map((advisorLink) => {
-                        if (advisorLink.indexOf("http") !== 0) {
-                            return "https://www.raymondjames.com" + advisorLink;
-                        } else {
-                            return advisorLink;
-                        }
+    while (true) {
+        html = await page.content();
+        $ = cheerio.load(html);
+        const theseAdvisors = $("li.faa-result")
+            .map((_, branch) => {
+                const $branch = $(branch);
+                const address = $branch
+                    .find("div.location-address span")
+                    .slice(0, -1)
+                    .map((_, el) => $(el).text())
+                    .toArray()
+                    .join(", ");
+                const matchArray = $branch
+                    .find("div.location-address span:last-child")
+                    .text()
+                    .match(/(?<city>\w+), (?<state>\w+)/);
+                const city = matchArray?.groups?.city;
+                const state = matchArray?.groups?.state;
+                const defaultPhone = $branch
+                    .find("a.location-phone")
+                    .text()
+                    .replace(".", "");
+                console.log($("div.faa-location-advisor").length);
+                const thisBranch = $branch
+                    .find("div.faa-location-advisor")
+                    .map((_, advisor) => {
+                        const $advisor = $(advisor);
+                        const name = $advisor
+                            .find("div.media-body > a:nth-child(1)")
+                            .text();
+                        const phoneNo =
+                            $advisor.find("a.advisor-phone").length > 1
+                                ? $advisor
+                                      .find("a.advisor-phone")
+                                      .text()
+                                      .replace(".", "")
+                                : defaultPhone;
+                        const sites = [
+                            $advisor
+                                .find("div.media-body > a:nth-child(1)")
+                                .attr("href") ?? "",
+                            ...$advisor
+                                .find("div.advisor-links > a")
+                                .map((_, el) => el.attribs["href"])
+                                .toArray(),
+                        ].map((advisorLink) => {
+                            if (advisorLink.indexOf("http") !== 0) {
+                                return (
+                                    "https://www.raymondjames.com" + advisorLink
+                                );
+                            } else {
+                                return advisorLink;
+                            }
+                        });
+                        const advisorInfo = <AdvisorInfo>{
+                            name, 
+                            phoneNo,
+                            address,
+                            city,
+                            state,
+                            sites,
+                        };
+                        console.log("GETS TO THIS POINT");
+                        return advisorInfo;
                     })
-                    return <AdvisorInfo>{
-                        name,
-                        phoneNo,
-                        address,
-                        sites,
-                    }
-                }
-            ).toArray()
-        }).toArray())
-    } while ()
+                    .toArray();
+                // console.log(thisBranch);
+                return thisBranch;
+            })
+            .toArray()
+            .flat();
+        // console.log(theseAdvisors);
+        const nextButton = await page.$("button.next");
+        if (nextButton === null || (await nextButton.isHidden())) {
+            break;
+        } else {
+            await nextButton.click();
+            await page.waitForSelector("li.faa-result");
+        }
+    }
+    await page.close();
+
+    return advisors;
+}
+
+async function scrapeSchwab(
+    zip: string,
+    browser: Browser
+): Promise<AdvisorInfo[]> {
+    const page = await browser.newPage();
+    await page.goto(`https://client.schwab.com/public/consultant/find`, {
+        timeout: 60_000,
+    });
+    await page.waitForSelector("input#txtAddr");
+    await page.type("input#txtAddr", zip, { delay: 100 });
+    await page.click("input#btn_LocateByZip");
+    await page.waitForSelector("div#fcResult");
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    const advisorLinks = $("div#widgetlinks > span:nth-child(8) > a")
+        .map(
+            (_, el) =>
+                "https://www.schwab.com/app/branch-services/financial-consultant/" +
+                el.attribs["href"].match(/\('(.+)'\)/)?.[1]
+        )
+        .toArray();
+    // console.log(advisorLinks);
+
+    return await BluePromise.map(
+        advisorLinks,
+        async (advisorLink) => await scrapeSchwabPage(advisorLink),
+        { concurrency: 20 }
+    );
+}
+
+async function scrapeSchwabPage(url: string) {
+    const html = await (await fetch(url)).text();
+    const $ = cheerio.load(html);
+
+    const name = $("h1").text().trim();
+    const phoneNo = $("a.phone-number")
+        .first()
+        .text()
+        .replace("+1", "")
+        .replaceAll("-", "")
+        .trim();
+    const matchGroups = $(
+        "div#_Branch_information-body div.schfx-text__body > p:nth-child(2)"
+    )
+        .html()
+        ?.match(
+            /<br>(?<address1>.+?)<br>(?<address2>.+?)?<br>(?<city>.+?)<br>(?<state>\w{2}).+?<br>\d{3}-\d{3}-\d{4}/
+        )?.groups;
+    const address = [matchGroups?.address1, matchGroups?.address2]
+        .filter((addressPart): addressPart is string => !!addressPart)
+        .join(", ");
+    const city = matchGroups?.city;
+    const state = matchGroups?.state;
+    const sites = [url];
+
+    return <AdvisorInfo>{
+        name,
+        phoneNo,
+        address,
+        city,
+        state,
+        sites,
+    };
+}
+
+async function scrapeLPL(
+    zip: string,
+    browser: Browser
+): Promise<AdvisorInfo[]> {
+    const page = await browser.newPage();
+    await page.goto(
+        "https://faa.lpl.com/FindAnAdvisor/app/advisor-search.html"
+    );
+    await page.type("input#address", zip, { delay: 100 });
+    await page.click("button.btn");
+    await page.waitForSelector("div.info-adv");
+    for (
+        let showMoreResult = await page.$("a.showMoreResult");
+        showMoreResult !== null && (await showMoreResult.isVisible());
+        showMoreResult = await page.$("a.showMoreResult")
+    ) {
+        await showMoreResult.click();
+    }
+    const html = await page.content();
+    const $ = cheerio.load(html);
+    await page.close();
+
+    return $("div.info-adv")
+        .map((_, advisorRow) => {
+            const $advisorRow = $(advisorRow);
+            const name = $advisorRow
+                .find("p.name")
+                .text()
+                .trim()
+                .replace("  ", " ")
+                .replace(
+                    /\w\S*/g,
+                    (text) =>
+                        text.charAt(0).toUpperCase() +
+                        text.substring(1).toLocaleLowerCase()
+                );
+            const address = $advisorRow
+                .find("div > p:nth-child(2)")
+                .text()
+                .trim()
+                .split("\n")[0];
+            // console.log($advisorRow.find("div > p:nth-child(2)").text());
+            const matchCityState = $advisorRow
+                .find("div > p:nth-child(2)")
+                .text()
+                .trim()
+                .split("\n")[1]
+                .trim()
+                .match(/(?<city>.+), (?<state>\w{2}) \d{5}/)?.groups;
+            const city = matchCityState?.city;
+            const state = matchCityState?.state;
+            const phoneNo = $advisorRow
+                .find("div > p > a")
+                .filter((_, el) => el.attribs["href"].startsWith("tel"))
+                .first()
+                .text()
+                .replaceAll(/\D/g, "");
+            const email = $advisorRow.find("a.search-result-email").text();
+            return <AdvisorInfo>{
+                name,
+                address,
+                city,
+                state,
+                phoneNo,
+                email,
+            };
+        })
+        .toArray();
 }
