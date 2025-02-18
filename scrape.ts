@@ -48,8 +48,7 @@ interface EdwardJonesAdvisor {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function scrape(zip: string): Promise<AdvisorInfo[]> {
-    const browser = await puppeteer.launch({});
+export async function scrape(zip: string, browser: Browser): Promise<AdvisorInfo[]> {
     let advisorFinders = [
         scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
@@ -482,6 +481,7 @@ async function scrapeSchwab(
     await page.waitForSelector("div#fcResult");
     const html = await page.content();
     const $ = cheerio.load(html);
+    await page.close()
 
     const advisorLinks = $("div#widgetlinks > span:nth-child(8) > a")
         .map(

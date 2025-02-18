@@ -5,6 +5,7 @@ import { mkdir, writeFile, access, constants, readFile } from "fs/promises";
 import { stringify } from "csv/sync";
 import { resolve } from "path";
 import { formatISO9075 } from "date-fns";
+import puppeteer from "puppeteer";
 
 async function main() {
     const rl = readline.createInterface({
@@ -42,9 +43,10 @@ async function main() {
     console.log(zipList);
 
     let advisors: AdvisorInfo[] = [];
+    const browser = await puppeteer.launch({timeout: 0});
     for (let zip of zipList) {
         console.log(`Scraping for ${zip}`);
-        advisors.push(...(await scrape(zip)));
+        advisors.push(...(await scrape(zip, browser)));
     }
     const fileName = `advisors ${formatISO9075(new Date()).replaceAll(
         ":",
