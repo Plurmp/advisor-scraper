@@ -1,7 +1,7 @@
 import { exit } from "process";
 import { AdvisorInfo, scrape } from "./scrape.js";
 import * as readline from "readline/promises";
-import { mkdir, writeFile, access, constants } from "fs/promises";
+import { mkdir, writeFile, access, constants, readFile } from "fs/promises";
 import { stringify } from "csv/sync";
 import { resolve } from "path";
 import { formatISO9075 } from "date-fns";
@@ -12,13 +12,40 @@ async function main() {
         output: process.stdout,
     });
 
-    let zip = (await rl.question("Enter zip code: ")).trim();
-    if (zip.match(/\d{5}/) === null) {
-        console.log("Error: not a valid zip code");
-        exit(1);
+    const usingZipList =
+        (await rl.question("Are you using a zip code list? (y/n) ")).trim() ===
+        "y";
+    let zipList: string[] = [];
+    if (usingZipList) {
+        const zipListFile = resolve(
+            (await rl.question("Enter file path: ")).trim()
+        );
+        zipList = (await readFile(zipListFile))
+            .toString()
+            .trim()
+            .split(/\r?\n/g)
+            .map((z) => z.trim());
+        for (const z of zipList) {
+            if (z.match(/\d{5}/) === null) {
+                console.log("Error: not a valid zip code");
+                exit(1);
+            }
+        }
+    } else {
+        const zip = (await rl.question("Enter zip code: ")).trim();
+        if (zip.match(/\d{5}/) === null) {
+            console.log("Error: not a valid zip code");
+            exit(1);
+        }
+        zipList.push(zip);
     }
+    console.log(zipList);
 
-    const advisors = await scrape(zip);
+    let advisors: AdvisorInfo[] = [];
+    for (let zip of zipList) {
+        console.log(`Scraping for ${zip}`);
+        advisors.push(...(await scrape(zip)));
+    }
     const fileName = `advisors ${formatISO9075(new Date()).replaceAll(
         ":",
         "-"

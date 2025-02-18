@@ -244,7 +244,10 @@ async function scrapeStifel(
 
     const page = await browser.newPage();
     await page.goto(url);
-    await page.waitForSelector("a.search-results-fa-link");
+    await page.waitForSelector("div.search-results");
+    if (await page.$("p.search-error-text") !== null) {
+        return [];
+    }
     let advisorPages = await page.$$eval("a.search-results-fa-link", (elems) =>
         elems.map((elem) => elem.href)
     );
