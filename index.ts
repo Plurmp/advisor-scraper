@@ -40,7 +40,8 @@ async function main() {
         }
         zipList.push(zip);
     }
-    console.log(zipList);
+    zipList = Array.from(new Set(zipList))
+    console.log(zipList)
 
     let advisors: AdvisorInfo[] = [];
     const browser = await puppeteer.launch({timeout: 0});
@@ -48,6 +49,8 @@ async function main() {
         console.log(`Scraping for ${zip}`);
         advisors.push(...(await scrape(zip, browser)));
     }
+    await browser.close();
+
     const fileName = `advisors ${formatISO9075(new Date()).replaceAll(
         ":",
         "-"

@@ -75,9 +75,15 @@ export async function scrape(zip: string, browser: Browser): Promise<AdvisorInfo
 
 async function scrapeEdwardJones(
     zip: string,
-    browser: Browser
+    browser: Browser,
+    retries = 0,
 ): Promise<AdvisorInfo[]> {
-    console.log("Scraping Edward Jones...");
+    if (retries === 0) {
+        // console.log("Scraping Edward Jones...");
+    } else if (retries >= 5) {
+        console.log("Retries on Edward Jones exceeding 5, aborting...")
+    }
+    
     const urlObject = new URL(
         "https://www.edwardjones.com/us-en/search/find-a-financial-advisor"
     );
@@ -88,7 +94,13 @@ async function scrapeEdwardJones(
     const page = await headful.newPage();
     await page.goto(urlObject.toString());
     await page.waitForSelector("button#tabs--2--tab--1");
-    await page.click("button#tabs--2--tab--1");
+    try {
+        await page.click("button#tabs--2--tab--1");
+    } catch {
+        console.log(`TimeoutError on Edward Jones, retrying (${retries})...`);
+        return scrapeEdwardJones(zip, browser, retries + 1)
+    }
+    
     const edResponse = await page.waitForResponse((response) =>
         response.url().includes("pageSize=200")
     );
@@ -125,7 +137,7 @@ async function scrapeAmeripriseAdvisors(
     retries = 0
 ): Promise<AdvisorInfo[]> {
     if (retries === 0) {
-        console.log("Scraping Ameriprise Advisors...");
+        // console.log("Scraping Ameriprise Advisors...");
     } else if (retries > 5) {
         console.log(`Retries on Ameriprise exceeding 5, aborting...`);
         return [];
@@ -138,6 +150,9 @@ async function scrapeAmeripriseAdvisors(
         await page.goto(url);
         await page.waitForSelector("div.card-main-container");
     } catch (e) {
+        if (await page.$("div.noResultsMessage") !== null) {
+            return []
+        }
         console.log(`TimeoutError on Ameriprise, retrying (${retries})...`);
         return scrapeAmeripriseAdvisors(zip, browser, retries + 1);
     }
@@ -237,7 +252,7 @@ async function scrapeStifel(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
-    console.log("Scraping Stifel...");
+    // console.log("Scraping Stifel...");
 
     let url = `https://www.stifel.com/fa/search?zipcode=${zip}&distance=20`;
 
@@ -370,7 +385,7 @@ async function scrapeRaymondJames(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
-    console.log("Scraping Raymond James...");
+    // console.log("Scraping Raymond James...");
     const url = `https://www.raymondjames.com/find-an-advisor?citystatezip=${zip}`;
 
     const newBrowser = await puppeteer.launch({ headless: false });
@@ -470,7 +485,7 @@ async function scrapeSchwab(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
-    console.log("Scraping Schwab...");
+    // console.log("Scraping Schwab...");
     const page = await browser.newPage();
     await page.goto(`https://client.schwab.com/public/consultant/find`, {
         timeout: 60_000,
@@ -538,7 +553,7 @@ async function scrapeLPL(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
-    console.log("Scraping LPL...");
+    // console.log("Scraping LPL...");
 
     const page = await browser.newPage();
     await page.goto(
