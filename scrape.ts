@@ -48,12 +48,15 @@ interface EdwardJonesAdvisor {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function scrape(zip: string, browser: Browser): Promise<AdvisorInfo[]> {
+export async function scrape(
+    zip: string,
+    browser: Browser
+): Promise<AdvisorInfo[]> {
     let advisorFinders = [
         scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
         scrapeStifel,
-        // scrapeJanney, // BLOCKED
+        scrapeJanney,
         // scrapeRaymondJames, // LOAD EACH ADVISOR
         scrapeSchwab,
         scrapeLPL,
@@ -76,21 +79,21 @@ export async function scrape(zip: string, browser: Browser): Promise<AdvisorInfo
 async function scrapeEdwardJones(
     zip: string,
     browser: Browser,
-    retries = 0,
+    retries = 0
 ): Promise<AdvisorInfo[]> {
     if (retries === 0) {
         // console.log("Scraping Edward Jones...");
     } else if (retries >= 5) {
-        console.log("Retries on Edward Jones exceeding 5, aborting...")
+        console.log("Retries on Edward Jones exceeding 5, aborting...");
     }
-    
+
     const urlObject = new URL(
         "https://www.edwardjones.com/us-en/search/find-a-financial-advisor"
     );
     urlObject.searchParams.set("fasearch", zip);
     urlObject.searchParams.set("searchtype", "2");
 
-    const headful = await puppeteer.launch({headless: false});
+    const headful = await puppeteer.launch({ headless: false });
     const page = await headful.newPage();
     await page.goto(urlObject.toString());
     await page.waitForSelector("button#tabs--2--tab--1");
@@ -98,9 +101,9 @@ async function scrapeEdwardJones(
         await page.click("button#tabs--2--tab--1");
     } catch {
         console.log(`TimeoutError on Edward Jones, retrying (${retries})...`);
-        return scrapeEdwardJones(zip, browser, retries + 1)
+        return scrapeEdwardJones(zip, browser, retries + 1);
     }
-    
+
     const edResponse = await page.waitForResponse((response) =>
         response.url().includes("pageSize=200")
     );
@@ -150,8 +153,8 @@ async function scrapeAmeripriseAdvisors(
         await page.goto(url);
         await page.waitForSelector("div.card-main-container");
     } catch (e) {
-        if (await page.$("div.noResultsMessage") !== null) {
-            return []
+        if ((await page.$("div.noResultsMessage")) !== null) {
+            return [];
         }
         console.log(`TimeoutError on Ameriprise, retrying (${retries})...`);
         return scrapeAmeripriseAdvisors(zip, browser, retries + 1);
@@ -259,7 +262,7 @@ async function scrapeStifel(
     const page = await browser.newPage();
     await page.goto(url);
     await page.waitForSelector("div.search-results");
-    if (await page.$("p.search-error-text") !== null) {
+    if ((await page.$("p.search-error-text")) !== null) {
         return [];
     }
     let advisorPages = await page.$$eval("a.search-results-fa-link", (elems) =>
@@ -331,54 +334,67 @@ async function scrapeStifelPage(
     };
 }
 
+// TODO: can we reverse the email encryption?
 async function scrapeJanney(zip: string, _: Browser): Promise<AdvisorInfo[]> {
-    const newBrowser = await puppeteer.launch({ headless: false });
-    const page = await newBrowser.newPage();
-    await page.goto(
-        "https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor"
+    const janneyResponse = await fetch(
+        "https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor/results",
+        {
+            credentials: "include",
+            headers: {
+                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+                Priority: "u=0, i",
+            },
+            referrer:
+                "https://www.janney.com/wealth-management/how-we-work-with-you/find-a-financial-advisor/results",
+            body: `SearchName=&Radius=50&SearchZip=${zip}`,
+            method: "POST",
+            mode: "cors",
+        }
     );
-    await writeFile("scrap.html", await page.content());
-    await page.waitForSelector("input#SearchZip");
-    await page.type("input#SearchZip", zip, { delay: 100 });
-    await page.click("div.jcom-form-group:nth-child(4) > button:nth-child(1)");
-    await page.waitForSelector("li.jcom-person-card");
-    const html = await page.content();
+    const html = await janneyResponse.text();
     const $ = cheerio.load(html);
-    await page.close();
-    await newBrowser.close();
-
-    const advisors = $("li.jcom-person-card")
-        .map((_, card) => {
-            const $cardContent = $(card).find("div.jcom-card-content");
+    return $("li.jcom-person-card > div.jcom-card-content")
+        .map((_, cardContent) => {
+            const $cardContent = $(cardContent);
             const name = $cardContent.find("h3.jcom-person-card-name").text();
-            const email = $cardContent
-                .find("i.jcom-icon--email")
-                .parent()
-                .text();
+            const sites = [
+                "https://www.janney.com" +
+                    $cardContent
+                        .find("h3.jcom-person-card-name > a")
+                        .attr("href"),
+            ];
             const phoneNo = $cardContent
                 .find("i.jcom-icon--phone")
                 .parent()
-                .text();
-            const address = $cardContent
+                .text()
+                .replaceAll(/\D/g, "");
+            const matchAddressGroups = $cardContent
                 .find("i.jcom-icon--location")
                 .parent()
-                .text();
-            const sites = [
-                "https://www.janney.com" + $cardContent.find("a").attr("href"),
-            ];
-
+                .html()
+                ?.match(
+                    /(?<address>[\w ,]+)<br>(?<city>[\w ]+), (?<state>\w{2}), \d{5}/
+                )?.groups;
+            const address = matchAddressGroups?.["address"];
+            const city = matchAddressGroups?.["city"];
+            const state = matchAddressGroups?.["state"];
             return <AdvisorInfo>{
                 name,
-                email,
                 phoneNo,
                 address,
+                city,
+                state,
                 sites,
             };
         })
         .toArray();
-    console.log(advisors[0]);
-
-    return [];
 }
 
 async function scrapeRaymondJames(
@@ -496,7 +512,7 @@ async function scrapeSchwab(
     await page.waitForSelector("div#fcResult");
     const html = await page.content();
     const $ = cheerio.load(html);
-    await page.close()
+    await page.close();
 
     const advisorLinks = $("div#widgetlinks > span:nth-child(8) > a")
         .map(
