@@ -34,7 +34,7 @@ async function main() {
         }
     } else {
         const zip = (await rl.question("Enter zip code: ")).trim();
-        if (zip.match(/\d{5}/) === null) {
+        if (zip.match(/^\d{5}$/) === null) {
             console.log("Error: not a valid zip code");
             exit(1);
         }
