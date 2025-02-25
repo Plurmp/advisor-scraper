@@ -27,7 +27,7 @@ async function main() {
             .split(/\r?\n/g)
             .map((z) => z.trim());
         for (const z of zipList) {
-            if (z.match(/\d{5}/) === null) {
+            if (z.match(/^\d{5}$/) === null) {
                 console.log("Error: not a valid zip code");
                 exit(1);
             }
