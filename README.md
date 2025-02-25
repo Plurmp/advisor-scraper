@@ -8,6 +8,8 @@
   tsc
 ```
 
+(if you are planning on editing the source code, type `tsc -w` in a separate terminal for automatic compilation)
+
 # Use
 1. In the terminal, enter:
 ```powershell
