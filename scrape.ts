@@ -93,15 +93,17 @@ async function scrapeEdwardJones(
     urlObject.searchParams.set("fasearch", zip);
     urlObject.searchParams.set("searchtype", "2");
 
-    const headful = await puppeteer.launch({ headless: false });
-    const page = await headful.newPage();
+    //const headful = await puppeteer.launch({ headless: false });
+    const page = await browser.newPage();
     await page.goto(urlObject.toString());
-    await page.waitForSelector("button#tabs--2--tab--1");
     try {
+        await page.waitForSelector("button#tabs--2--tab--1", {
+            timeout: 20000,
+        });
         await page.click("button#tabs--2--tab--1");
     } catch {
-        console.log(`TimeoutError on Edward Jones, retrying (${retries})...`);
-        return scrapeEdwardJones(zip, browser, retries + 1);
+        console.log(`TimeoutError on Edward Jones, not retrying`);
+        return [];
     }
 
     const edResponse = await page.waitForResponse((response) =>
@@ -112,7 +114,7 @@ async function scrapeEdwardJones(
     );
     const edResults = JSON.parse(jsonString) as EdwardJonesResults;
 
-    await headful.close();
+    //await headful.close();
 
     return edResults.results.map((advisor) => {
         let sites = ["https://www.edwardjones.com" + advisor.faUrl];
@@ -503,100 +505,116 @@ async function scrapeSchwab(
 ): Promise<AdvisorInfo[]> {
     // console.log("Scraping Schwab...");
     const page = await browser.newPage();
-    await page.goto(`https://client.schwab.com/public/consultant/find`, {
-        timeout: 60_000,
-    });
+    await page.goto(`https://client.schwab.com/public/consultant/find`);
+
     await page.waitForSelector("input#txtAddr");
-    await page.type("input#txtAddr", zip, { delay: 100 });
+
+    await page.type("input#txtAddr", zip, { delay: 300 });
+
     await page.click("input#btn_LocateByZip");
-    await page.waitForSelector("div#fcResult");
+
+    try {
+        await page.waitForSelector("div#fcResult", { timeout: 20000 }); // 20-second timeout
+    } catch (error) {
+        console.log(`No results found for ZIP code: ${zip} with Schwab`);
+        await page.close();
+        return [];
+    }
+
     const html = await page.content();
     const $ = cheerio.load(html);
     await page.close();
 
-    const advisorLinks = $("div#widgetlinks > span:nth-child(8) > a")
-        .map(
-            (_, el) =>
-                "https://www.schwab.com/app/branch-services/financial-consultant/" +
-                el.attribs["href"].match(/\('(.+)'\)/)?.[1]
-        )
+    const advisors: AdvisorInfo[] = $("div#fcResult > div")
+        .map((_, el) => {
+            const name = $(el).find("a#fcDisplayName").text().trim();
+            const phoneNo = $(el)
+                .find(".widgetphone.telSpan")
+                .text()
+                .replace("+1", "")
+                .replaceAll("-", "")
+                .trim();
+
+            // Extract address details
+            const addressParts = $(el)
+                .find(".mapSpan, .mapLink")
+                .first()
+                .text()
+                .split(".");
+            const address = addressParts.slice(1, -3).join(", ").trim(); // Street address
+            const city = addressParts.at(-3)?.trim();
+            const state = addressParts.at(-2)?.trim();
+
+            // Extract profile link
+            const profileMatch = $(el)
+                .find("a#fcDisplayName")
+                .attr("href")
+                ?.match(/redirectToProfilePage\('(.+)'\)/);
+            const profileId = profileMatch ? profileMatch[1] : null;
+            const profileUrl = profileId
+                ? `https://www.schwab.com/app/branch-services/financial-consultant/${profileId}`
+                : null;
+
+            return {
+                name,
+                phoneNo,
+                address,
+                city,
+                state,
+                sites: profileUrl ? [profileUrl] : [],
+            };
+        })
         .toArray();
-    // console.log(advisorLinks);
 
-    return await BluePromise.map(
-        advisorLinks,
-        async (advisorLink) => await scrapeSchwabPage(advisorLink),
-        { concurrency: 20 }
-    );
-}
-
-async function scrapeSchwabPage(url: string) {
-    const html = await (await fetch(url)).text();
-    const $ = cheerio.load(html);
-
-    const name = $("h1").text().trim();
-    const phoneNo = $("a.phone-number")
-        .first()
-        .text()
-        .replace("+1", "")
-        .replaceAll("-", "")
-        .trim();
-    const matchGroups = $(
-        "div#_Branch_information-body div.schfx-text__body > p:nth-child(2)"
-    )
-        .html()
-        ?.match(
-            /<br>(?<address1>.+?)<br>(?<address2>.+?)?<br>(?<city>.+?)<br>(?<state>\w{2}).+?<br>\d{3}-\d{3}-\d{4}/
-        )?.groups;
-    const address = [matchGroups?.address1, matchGroups?.address2]
-        .filter((addressPart): addressPart is string => !!addressPart)
-        .join(", ");
-    const city = matchGroups?.city;
-    const state = matchGroups?.state;
-    const sites = [url];
-
-    return <AdvisorInfo>{
-        name,
-        phoneNo,
-        address,
-        city,
-        state,
-        sites,
-    };
+    console.log("Schwab Complete");
+    return advisors;
 }
 
 async function scrapeLPL(
     zip: string,
     browser: Browser
 ): Promise<AdvisorInfo[]> {
-    // console.log("Scraping LPL...");
+    //console.log("Scraping LPL...");
 
     const page = await browser.newPage();
     await page.goto(
         "https://faa.lpl.com/FindAnAdvisor/app/advisor-search.html"
     );
-    await page.type("input#address", zip, { delay: 100 });
+
+    await page.type("input#address", zip, { delay: 300 });
+
     await page.click("button.btn");
+
     await page.waitForSelector("div.info-adv");
-    for (
+
+    let resultsCount = 0;
+    let resultsMax = 4;
+
+    while (resultsCount < resultsMax) {
         let showMoreResult = await page.$("a.showMoreResult");
-        showMoreResult !== null && (await showMoreResult.isVisible());
-        showMoreResult = await page.$("a.showMoreResult")
-    ) {
-        await showMoreResult.click();
+
+        if (showMoreResult && (await showMoreResult.isVisible())) {
+            await showMoreResult.click();
+            resultsCount++;
+            //console.log("Showing more results");
+        } else {
+            console.log(`button not found by ${resultsCount} click`);
+            break;
+        }
     }
     const html = await page.content();
+
     const $ = cheerio.load(html);
     await page.close();
 
-    return $("div.info-adv")
+    const advisors = $("div.info-adv")
         .map((_, advisorRow) => {
             const $advisorRow = $(advisorRow);
             const name = $advisorRow
                 .find("p.name")
                 .text()
                 .trim()
-                .replace("  ", " ")
+                .replace(" ", " ")
                 .replace(
                     /\w\S*/g,
                     (text) =>
@@ -635,4 +653,7 @@ async function scrapeLPL(
             };
         })
         .toArray();
+
+    console.log("LPL complete");
+    return advisors;
 }
