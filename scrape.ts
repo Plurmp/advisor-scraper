@@ -53,13 +53,13 @@ export async function scrape(
     browser: Browser
 ): Promise<AdvisorInfo[]> {
     let advisorFinders = [
-        scrapeEdwardJones,
+        // scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
-        scrapeStifel,
-        scrapeJanney,
+        // scrapeStifel,
+        // scrapeJanney,
         // scrapeRaymondJames, // LOAD EACH ADVISOR
-        scrapeSchwab,
-        scrapeLPL,
+        // scrapeSchwab,
+        // scrapeLPL,
     ];
     return (
         await Promise.all(
@@ -180,17 +180,26 @@ async function scrapeAmeripriseAdvisors(
             (_, el) => "https://www.ameripriseadvisors.com" + el.attribs["href"]
         )
         .toArray();
+    
+    const groupPages = advisorPages
+        .filter((page) => page.includes("/team/"));
+    const individualPages = advisorPages
+        .filter((page) => !page.includes("/team/"));
+    
+    let advisors: AdvisorInfo[] = [];
+    advisors.push(...(await BluePromise.map(
+        groupPages,
+        async groupPage => await scrapeAmeripriseGroupPage(groupPage),
+        { concurrency: 10 }
+    )).flat());
+    advisors.push(...(await BluePromise.map(
+        individualPages,
+        async page => await scrapeAmeripriseAdvisorsPage(page),
+        { concurrency: 10 }
+    )).filter((a): a is AdvisorInfo => !!a))
 
     // console.log(advisorPages);
-
-    return (
-        await BluePromise.map(
-            advisorPages,
-            async (advisorPage) =>
-                await scrapeAmeripriseAdvisorsPage(advisorPage),
-            { concurrency: 20 }
-        )
-    ).filter((a): a is AdvisorInfo => !!a);
+    return advisors;
 }
 
 async function scrapeAmeripriseAdvisorsPage(
@@ -251,6 +260,38 @@ async function scrapeAmeripriseAdvisorsPage(
             (site) => site.length > 0
         ),
     };
+}
+
+async function scrapeAmeripriseGroupPage(
+    url: string,
+    retries = 0,
+): Promise<AdvisorInfo[]> {
+    if (retries > 5) {
+        console.log(`Retries on ${url} exceeding 5, aborting...`);
+        return [];
+    }
+
+    const newUrl = url.replace(/\/\?.+$/, "") + "financial-advice-team";
+
+    let html = "";
+    try {
+        html = await (await fetch(newUrl)).text();
+    } catch (e) {
+        if (e instanceof TypeError) {
+            console.log(`Fetch on ${newUrl} failed, retrying(${retries})...`);
+            return scrapeAmeripriseGroupPage(url, retries + 1);
+        }
+    }
+    const $ = cheerio.load(html);
+    const advisorLinks = $("a.team-member-item-link:nth-child(4)").map(
+        (_, el) => el.attribs["href"]
+    ).toArray();
+
+    return (await BluePromise.map(
+        advisorLinks,
+        async (advisorLink) => await scrapeAmeripriseAdvisorsPage(advisorLink),
+        { concurrency: 20 },
+    )).filter((a): a is AdvisorInfo => !!a)
 }
 
 async function scrapeStifel(
