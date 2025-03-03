@@ -53,13 +53,13 @@ export async function scrape(
     browser: Browser
 ): Promise<AdvisorInfo[]> {
     let advisorFinders = [
-        // scrapeEdwardJones,
+        scrapeEdwardJones,
         scrapeAmeripriseAdvisors,
-        // scrapeStifel,
-        // scrapeJanney,
+        scrapeStifel,
+        scrapeJanney,
         // scrapeRaymondJames, // LOAD EACH ADVISOR
-        // scrapeSchwab,
-        // scrapeLPL,
+        scrapeSchwab,
+        scrapeLPL,
     ];
     return (
         await Promise.all(
@@ -271,7 +271,7 @@ async function scrapeAmeripriseGroupPage(
         return [];
     }
 
-    const newUrl = url.replace(/\/\?.+$/, "") + "financial-advice-team";
+    const newUrl = url.replace(/\/\?.+$/, "") + "/financial-advice-team";
 
     let html = "";
     try {
