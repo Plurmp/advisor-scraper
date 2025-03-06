@@ -46,6 +46,18 @@ interface EdwardJonesAdvisor {
         | "";
 }
 
+interface RaymondJamesResults {
+    results: RaymondJamesAdvisor[];
+}
+
+interface RaymondJamesAdvisor {
+    name: string;
+    phone: string;
+    emailAddress: string;
+    websiteUrl: string;
+    advisorProfileUrl: string;
+}
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function scrape(
@@ -53,13 +65,13 @@ export async function scrape(
     browser: Browser
 ): Promise<AdvisorInfo[]> {
     let advisorFinders = [
-        scrapeEdwardJones,
-        scrapeAmeripriseAdvisors,
-        scrapeStifel,
-        scrapeJanney,
-        // scrapeRaymondJames, // LOAD EACH ADVISOR
-        scrapeSchwab,
-        scrapeLPL,
+        // scrapeEdwardJones,
+        // scrapeAmeripriseAdvisors,
+        // scrapeStifel,
+        // scrapeJanney,
+        scrapeRaymondJames, // LOAD EACH ADVISOR
+        // scrapeSchwab,
+        // scrapeLPL,
     ];
     return (
         await Promise.all(
@@ -180,23 +192,31 @@ async function scrapeAmeripriseAdvisors(
             (_, el) => "https://www.ameripriseadvisors.com" + el.attribs["href"]
         )
         .toArray();
-    
-    const groupPages = advisorPages
-        .filter((page) => page.includes("/team/"));
-    const individualPages = advisorPages
-        .filter((page) => !page.includes("/team/"));
-    
+
+    const groupPages = advisorPages.filter((page) => page.includes("/team/"));
+    const individualPages = advisorPages.filter(
+        (page) => !page.includes("/team/")
+    );
+
     let advisors: AdvisorInfo[] = [];
-    advisors.push(...(await BluePromise.map(
-        groupPages,
-        async groupPage => await scrapeAmeripriseGroupPage(groupPage),
-        { concurrency: 10 }
-    )).flat());
-    advisors.push(...(await BluePromise.map(
-        individualPages,
-        async page => await scrapeAmeripriseAdvisorsPage(page),
-        { concurrency: 10 }
-    )).filter((a): a is AdvisorInfo => !!a))
+    advisors.push(
+        ...(
+            await BluePromise.map(
+                groupPages,
+                async (groupPage) => await scrapeAmeripriseGroupPage(groupPage),
+                { concurrency: 10 }
+            )
+        ).flat()
+    );
+    advisors.push(
+        ...(
+            await BluePromise.map(
+                individualPages,
+                async (page) => await scrapeAmeripriseAdvisorsPage(page),
+                { concurrency: 10 }
+            )
+        ).filter((a): a is AdvisorInfo => !!a)
+    );
 
     // console.log(advisorPages);
     return advisors;
@@ -264,7 +284,7 @@ async function scrapeAmeripriseAdvisorsPage(
 
 async function scrapeAmeripriseGroupPage(
     url: string,
-    retries = 0,
+    retries = 0
 ): Promise<AdvisorInfo[]> {
     if (retries > 5) {
         console.log(`Retries on ${url} exceeding 5, aborting...`);
@@ -283,15 +303,18 @@ async function scrapeAmeripriseGroupPage(
         }
     }
     const $ = cheerio.load(html);
-    const advisorLinks = $("a.team-member-item-link:nth-child(4)").map(
-        (_, el) => el.attribs["href"]
-    ).toArray();
+    const advisorLinks = $("a.team-member-item-link:nth-child(4)")
+        .map((_, el) => el.attribs["href"])
+        .toArray();
 
-    return (await BluePromise.map(
-        advisorLinks,
-        async (advisorLink) => await scrapeAmeripriseAdvisorsPage(advisorLink),
-        { concurrency: 20 },
-    )).filter((a): a is AdvisorInfo => !!a)
+    return (
+        await BluePromise.map(
+            advisorLinks,
+            async (advisorLink) =>
+                await scrapeAmeripriseAdvisorsPage(advisorLink),
+            { concurrency: 20 }
+        )
+    ).filter((a): a is AdvisorInfo => !!a);
 }
 
 async function scrapeStifel(
@@ -447,95 +470,47 @@ async function scrapeRaymondJames(
     // console.log("Scraping Raymond James...");
     const url = `https://www.raymondjames.com/find-an-advisor?citystatezip=${zip}`;
 
-    const newBrowser = await puppeteer.launch({ headless: false });
-    const page = await newBrowser.newPage();
-    await page.goto(url);
+    const headful = await puppeteer.launch({headless: false});
+    const page = await headful.newPage();
+    await page.goto(url, {timeout: 60_000});
     await page.waitForSelector("li.faa-result");
 
-    let html = await page.content();
-    let $ = cheerio.load(html);
     let advisors: AdvisorInfo[] = [];
     while (true) {
-        html = await page.content();
-        $ = cheerio.load(html);
-        const theseAdvisors = $("li.faa-result")
-            .map((_, branch) => {
-                const $branch = $(branch);
-                const address = $branch
-                    .find("div.location-address span")
-                    .slice(0, -1)
-                    .map((_, el) => $(el).text())
-                    .toArray()
-                    .join(", ");
-                const matchArray = $branch
-                    .find("div.location-address span:last-child")
-                    .text()
-                    .match(/(?<city>\w+), (?<state>\w+)/);
-                const city = matchArray?.groups?.city;
-                const state = matchArray?.groups?.state;
-                const defaultPhone = $branch
-                    .find("a.location-phone")
-                    .text()
-                    .replace(".", "");
-                console.log($("div.faa-location-advisor").length);
-                const thisBranch = $branch
-                    .find("div.faa-location-advisor")
-                    .map((_, advisor) => {
-                        const $advisor = $(advisor);
-                        const name = $advisor
-                            .find("div.media-body > a:nth-child(1)")
-                            .text();
-                        const phoneNo =
-                            $advisor.find("a.advisor-phone").length > 1
-                                ? $advisor
-                                      .find("a.advisor-phone")
-                                      .text()
-                                      .replace(".", "")
-                                : defaultPhone;
-                        const sites = [
-                            $advisor
-                                .find("div.media-body > a:nth-child(1)")
-                                .attr("href") ?? "",
-                            ...$advisor
-                                .find("div.advisor-links > a")
-                                .map((_, el) => el.attribs["href"])
-                                .toArray(),
-                        ].map((advisorLink) => {
-                            if (advisorLink.indexOf("http") !== 0) {
-                                return (
-                                    "https://www.raymondjames.com" + advisorLink
-                                );
-                            } else {
-                                return advisorLink;
-                            }
-                        });
-                        const advisorInfo = <AdvisorInfo>{
-                            name,
-                            phoneNo,
-                            address,
-                            city,
-                            state,
-                            sites,
-                        };
-                        console.log("GETS TO THIS POINT");
-                        return advisorInfo;
-                    })
-                    .toArray();
-                // console.log(thisBranch);
-                return thisBranch;
-            })
-            .toArray()
-            .flat();
-        // console.log(theseAdvisors);
-        const nextButton = await page.$("button.next");
-        if (nextButton === null || (await nextButton.isHidden())) {
-            break;
-        } else {
-            await nextButton.click();
-            await page.waitForSelector("li.faa-result");
+        let buttons = await page.$$("div.result-left button.view-advisors");
+        if (await buttons[0].isHidden()) {
+            buttons = await page.$$("div.hidden-md button.btn-default.view-advisors");
         }
+        for (let button of buttons) {
+            await button.evaluate(b => b.click);
+            const rjResponse = await page.waitForResponse((response) =>
+                response.url().includes("/dotcom/api/searchbranchadvisors")
+            );
+            const jsonString = Buffer.from(
+                await rjResponse.content()
+            ).toString("utf-8");
+            const rjResults = JSON.parse(jsonString) as RaymondJamesResults;
+            advisors.push(...rjResults.results.map(
+                (result) =>
+                    <AdvisorInfo>{
+                        name: result.name,
+                        phoneNo: result.phone,
+                        email: result.emailAddress,
+                        sites: [
+                            result.websiteUrl,
+                            "https://www.raymondjames.com" +
+                                result.advisorProfileUrl,
+                        ],
+                    }
+            ));
+        }
+        let next_button = await page.$("button.next");
+        if (next_button === null || (await next_button.evaluate(el => [...el.classList])).includes("noshow")) {
+            break;
+        }
+        await next_button.evaluate(b => b.click);
+        await page.waitForSelector("li.faa-result");
     }
-    await page.close();
 
     return advisors;
 }
