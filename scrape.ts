@@ -85,6 +85,7 @@ async function scrapeEdwardJones(
         // console.log("Scraping Edward Jones...");
     } else if (retries >= 5) {
         console.log("Retries on Edward Jones exceeding 5, aborting...");
+        return [];
     }
 
     const urlObject = new URL(
@@ -93,22 +94,27 @@ async function scrapeEdwardJones(
     urlObject.searchParams.set("fasearch", zip);
     urlObject.searchParams.set("searchtype", "2");
 
-    //const headful = await puppeteer.launch({ headless: false });
+    // const headful = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
-    await page.goto(urlObject.toString());
     try {
-        await page.waitForSelector("button#tabs--2--tab--1", {
+        await page.goto(urlObject.toString());
+        // console.log("navigated successfully")
+        await page.waitForSelector('button[data-testid="mapview"]', {
             timeout: 20000,
         });
-        await page.click("button#tabs--2--tab--1");
+        // console.log("found map view button");
+        
+        await page.click('button[data-testid="mapview"]');
     } catch {
-        console.log(`TimeoutError on Edward Jones, not retrying`);
-        return [];
+        console.log(`TimeoutError on Edward Jones, retrying (${retries})`);
+        await page.close();
+        return scrapeEdwardJones(zip, browser, retries + 1);
     }
 
-    const edResponse = await page.waitForResponse((response) =>
-        response.url().includes("pageSize=200")
-    );
+    const edResponse = await page.waitForResponse((response) => {
+        // console.log(response.url());
+        return response.url().includes("pageSize=200")
+    });
     const jsonString = Buffer.from(await edResponse.content()).toString(
         "utf-8"
     );
